@@ -10,24 +10,24 @@ import org.kairosdb.core.exception.DatastoreException;
 import org.kairosdb.eventbus.FilterEventBus;
 import org.kairosdb.eventbus.Publisher;
 import org.kairosdb.events.DataPointEvent;
+import org.kairosdb.metrics4j.MetricSourceManager;
+import org.kairosdb.metrics4j.collectors.LongCollector;
 import org.mockito.ArgumentMatcher;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.equalTo;
-import static org.junit.Assert.assertThat;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 public class RemoteListenerTest
 {
 	private RemoteHost mockRemoteHost;
-	private FilterEventBus mockEventBus;
 	private DiskUtils mockDiskUtils;
 	private File tempDir;
-	private Publisher<DataPointEvent> mockPublisher;
 
 	@SuppressWarnings("unchecked")
 	@Before
@@ -35,11 +35,7 @@ public class RemoteListenerTest
 	{
 		tempDir = Files.createTempDirectory("RemoteDatastoreTestTempDir").toFile();
 		mockRemoteHost = mock(RemoteHost.class);
-		mockEventBus = mock(FilterEventBus.class);
 		mockDiskUtils = mock(DiskUtils.class);
-		mockPublisher = mock(Publisher.class);
-
-		when(mockEventBus.createPublisher(DataPointEvent.class)).thenReturn(mockPublisher);
 	}
 
 	@After
@@ -52,9 +48,12 @@ public class RemoteListenerTest
 	@Test
 	public void test_cleanup() throws IOException, DatastoreException
 	{
+		LongCollector deletedSize = mock(LongCollector.class);
+		MetricSourceManager.setCollectorForSource(deletedSize, RemoteStats.class).deletedZipFileSize();
+
 		when(mockDiskUtils.percentAvailable(any())).thenReturn(4L).thenReturn(4L).thenReturn(20L);
 		RemoteListener remoteListener = new RemoteListener(tempDir.getAbsolutePath(), "95",
-				2000,"localhost", mockRemoteHost, mockEventBus, mockDiskUtils);
+				2000, mockRemoteHost, mockDiskUtils);
 
 		// Create zip files
 		createZipFile("zipFile1.gz");
@@ -66,9 +65,8 @@ public class RemoteListenerTest
 
 		// assert that temp dir only contains x number of zip files
 		File[] files = tempDir.listFiles((dir, name) -> name.endsWith(".gz"));
-		assertThat(files.length, equalTo(3));
-		verify(mockPublisher, times(2)).post(argThat(
-				new DataPointEventMatcher(createDataPoint("kairosdb.remote.deleted_zipFile_size", 14L))));
+		assertThat(files.length).isEqualTo(3);
+		verify(deletedSize, times(2)).put(14L);
 	}
 
 	@Test
@@ -76,7 +74,7 @@ public class RemoteListenerTest
 	{
 		when(mockDiskUtils.percentAvailable(any())).thenReturn(20L);
 		RemoteListener remoteListener = new RemoteListener(tempDir.getAbsolutePath(), "95",
-				2000,"localhost", mockRemoteHost, mockEventBus, mockDiskUtils);
+				2000, mockRemoteHost, mockDiskUtils);
 
 		remoteListener.sendData();
 

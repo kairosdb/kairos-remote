@@ -33,11 +33,13 @@ import org.kairosdb.eventbus.Publisher;
 import org.kairosdb.eventbus.Subscribe;
 import org.kairosdb.events.DataPointEvent;
 import org.kairosdb.events.ShutdownEvent;
+import org.kairosdb.metrics4j.MetricSourceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.SortedMap;
 import java.util.concurrent.TimeUnit;
@@ -51,6 +53,8 @@ import static com.google.common.base.Strings.isNullOrEmpty;
 public class RemoteListener
 {
 	private static final Logger logger = LoggerFactory.getLogger(RemoteListener.class);
+	private static final RemoteStats stats = MetricSourceManager.getSource(RemoteStats.class);
+
 	private static final String DATA_DIR_PROP = "kairosdb.remote.data_dir";
 	private static final String DROP_PERCENT_PROP = "kairosdb.remote.drop_on_used_disk_space_threshold_percent";
 	private static final String METRIC_PREFIX_FILTER = "kairosdb.remote.prefix_filter";
@@ -60,6 +64,7 @@ public class RemoteListener
 	private static final String WRITE_SIZE_METRIC = "kairosdb.remote.write_size";
 	private static final String TIME_TO_SEND_METRIC = "kairosdb.remote.time_to_send";
 	private static final String DELETE_ZIP_METRIC = "kairosdb.remote.deleted_zipFile_size";
+
 	private static final String FLUSH_INTERVAL = "kairosdb.remote.flush_interval_ms";
 	private static final String MAX_FILE_SIZE_MB = "kairosdb.remote.max_file_size_mb";
 
@@ -70,9 +75,7 @@ public class RemoteListener
 	private final RemoteHost m_remoteHost;
 	private final DiskUtils m_diskUtils;
 	private final int m_flushInterval;
-	private final ImmutableSortedMap<String, String> m_tags;
 	private BufferedWriter m_dataWriter;
-	private final Publisher<DataPointEvent> m_publisher;
 	private String m_dataFileName;
 	private volatile boolean m_firstDataPoint = true;
 	private int m_dataPointCounter;
@@ -103,23 +106,15 @@ public class RemoteListener
 	public RemoteListener(@Named(DATA_DIR_PROP) String dataDir,
 			@Named(DROP_PERCENT_PROP) String dropPercent,
 			@Named(FLUSH_INTERVAL) int flushInterval,
-			@Named("HOSTNAME") String hostName,
 			RemoteHost remoteHost,
-			FilterEventBus eventBus,
 			DiskUtils diskUtils) throws IOException, DatastoreException
 	{
 		m_dataDirectory = new File(dataDir);
 		m_dropPercent = Integer.parseInt(dropPercent);
 		checkArgument(m_dropPercent > 0 && m_dropPercent <= 100, "drop_on_used_disk_space_threshold_percent must be greater than 0 and less than or equal to 100");
-		checkNotNull(eventBus, "eventBus must not be null");
 		m_remoteHost = checkNotNull(remoteHost, "remote host must not be null");
-		m_publisher = eventBus.createPublisher(DataPointEvent.class);
 		m_diskUtils = checkNotNull(diskUtils, "diskUtils must not be null");
 		m_flushInterval = flushInterval;
-
-		m_tags = ImmutableSortedMap.<String, String>naturalOrder()
-				.put("host", hostName)
-				.build();
 
 		createNewMap();
 
@@ -380,9 +375,7 @@ public class RemoteListener
 					long size = zipFiles[0].length();
 					Files.delete(zipFiles[0].toPath());
 					logger.warn("Disk is too full to create zip file. Deleted older zip file " + zipFiles[0].getName() + " size: " + size);
-					// For forwarding this metric will be reported both on the local kairos node and the remote
-					m_publisher.post(new DataPointEvent(DELETE_ZIP_METRIC, m_tags,
-							m_longDataPointFactory.createDataPoint(System.currentTimeMillis(), size)));
+					stats.deletedZipFileSize().put(size);
 					cleanDiskSpace(); // continue cleaning until space is freed up or all zip files are deleted.
 				}
 				catch (IOException e)
@@ -427,16 +420,10 @@ public class RemoteListener
 
 		long zipSize = zipFile(oldDataFile);
 
-		try
-		{
-			putDataPoint(new DataPointEvent(FILE_SIZE_METRIC, m_tags, m_longDataPointFactory.createDataPoint(now, fileSize), 0));
-			putDataPoint(new DataPointEvent(WRITE_SIZE_METRIC, m_tags, m_longDataPointFactory.createDataPoint(now, dataPointCounter), 0));
-			putDataPoint(new DataPointEvent(ZIP_FILE_SIZE_METRIC, m_tags, m_longDataPointFactory.createDataPoint(now, zipSize), 0));
-		}
-		catch (DatastoreException e)
-		{
-			logger.error("Error writing remote metrics", e);
-		}
+
+		stats.fileSize().put(fileSize);
+		stats.writeSize().put(dataPointCounter);
+		stats.zipFileSize().put(zipSize);
 	}
 
 	//Called by RemoteSendJob that is on a timer set in config
@@ -454,14 +441,7 @@ public class RemoteListener
 
 			timeToSend = sendTimer.elapsed(TimeUnit.MILLISECONDS);
 
-			try
-			{
-				putDataPoint(new DataPointEvent(TIME_TO_SEND_METRIC, m_tags, m_longDataPointFactory.createDataPoint(now, timeToSend), 0));
-			}
-			catch (DatastoreException e)
-			{
-				logger.error("Error writing remote metrics", e);
-			}
+			stats.timeToSend().put(Duration.ofMillis(timeToSend));
 		}
 	}
 

@@ -18,6 +18,7 @@ import org.kairosdb.core.exception.DatastoreException;
 import org.kairosdb.eventbus.FilterEventBus;
 import org.kairosdb.eventbus.Publisher;
 import org.kairosdb.events.DataPointEvent;
+import org.kairosdb.metrics4j.MetricSourceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,16 +33,14 @@ import java.util.concurrent.TimeUnit;
 public class RemoteHostImpl implements RemoteHost
 {
 	private static final Logger logger = LoggerFactory.getLogger(RemoteHostImpl.class);
+	private static final RemoteStats stats = MetricSourceManager.getSource(RemoteStats.class);
+
 	private static final String REMOTE_URL_PROP = "kairosdb.remote.remote_url";
 	private static final String CONNECTION_REQUEST_TIMEOUT = "kairosdb.remote.connection_request_timeout";
 	private static final String CONNECTION_TIMEOUT = "kairosdb.remote.connection_timeout";
 	private static final String SOCKET_TIMEOUT = "kairosdb.remote.socket_timeout";
 
-	private static final String ERROR_METRIC = "kairosdb.remote.error";
-
 	private final String m_url;
-	private final Publisher<DataPointEvent> m_publisher;
-	private final ImmutableSortedMap<String, String> m_tags;
 	private CloseableHttpAsyncClient m_client;
 	private final long m_futureTimeout;
 
@@ -52,15 +51,12 @@ public class RemoteHostImpl implements RemoteHost
 	public RemoteHostImpl(@Named(REMOTE_URL_PROP) String remoteUrl,
 			@Named(CONNECTION_REQUEST_TIMEOUT) int requestTimeout,
 			@Named(CONNECTION_TIMEOUT) int connectionTimeout,
-			@Named(SOCKET_TIMEOUT) int socketTimeout,
-			@Named("HOSTNAME") String hostName,
-			FilterEventBus eventBus)
+			@Named(SOCKET_TIMEOUT) int socketTimeout)
 	{
 		m_url = remoteUrl;
 		if (m_url == null || m_url.isEmpty())
 			throw new IllegalArgumentException("url must not be null or empty");
 
-		m_publisher = eventBus.createPublisher(DataPointEvent.class);
 		RequestConfig requestConfig = RequestConfig.custom().setSocketTimeout(socketTimeout)
 				.setConnectionRequestTimeout(requestTimeout)
 				.setConnectTimeout(connectionTimeout)
@@ -71,18 +67,8 @@ public class RemoteHostImpl implements RemoteHost
 		m_futureTimeout = socketTimeout + requestTimeout + connectionTimeout;
 
 		m_client.start();
-
-		m_tags = ImmutableSortedMap.<String, String>naturalOrder()
-				.put("host", hostName)
-				.build();
 	}
 
-	private void sendErrorMetric(String cause, int value)
-	{
-		ImmutableSortedMap<String, String> tags = ImmutableSortedMap.<String, String>naturalOrder().putAll(m_tags).put("cause", cause).build();
-		m_publisher.post(new DataPointEvent(ERROR_METRIC, tags,
-				m_longDataPointFactory.createDataPoint(System.currentTimeMillis(), value)));
-	}
 
 	@Override
 	public void sendZipFile(File zipFile) throws IOException
@@ -110,7 +96,7 @@ public class RemoteHostImpl implements RemoteHost
 				catch (IOException e)
 				{
 					logger.error("Could not delete zip file: " + zipFile.getName());
-					sendErrorMetric("delete_failure", 1);
+					stats.error("delete_failure").put(1);
 				}
 			}
 			else if (response.getStatusLine().getStatusCode() == 400)
@@ -124,7 +110,7 @@ public class RemoteHostImpl implements RemoteHost
 						" - " + body.toString("UTF-8"));
 
 				zipFile.renameTo(new File(zipFile.getPath() + ".failed"));
-				sendErrorMetric("bad_json", 1);
+				stats.error("bad_json").put(1);
 			}
 			else
 			{
@@ -132,12 +118,12 @@ public class RemoteHostImpl implements RemoteHost
 				response.getEntity().writeTo(body);
 				logger.error("Unable to send file " + zipFile + ": " + response.getStatusLine() +
 						" - " + body.toString("UTF-8"));
-				sendErrorMetric("upload_failure", 1);
+				stats.error("upload_failure").put(1);
 			}
 		}
 		catch (Exception e)
 		{
-			sendErrorMetric("send_failure", 1);
+			stats.error("send_failure").put(1);
 			throw new IOException("Unable to connect to remote host", e);
 		}
 	}
