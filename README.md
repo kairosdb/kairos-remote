@@ -22,3 +22,39 @@ use the `ListenerModule`, effectively making the Kairos instance a write only no
 that forwards data on to another Kairos instance.  This is useful so clients
 can report metrics locally and the metrics are compressed and forwarded ot a 
 remote Kairos instance.
+
+
+## Metrics
+
+Sample metrics4j.conf file to add to your kairosdb metrics4j.conf file
+```hocon
+metrics4j: {
+  sources: {
+    #Kairos Remote
+    org.kairosdb.plugin.remote.RemoteStats: {
+      _collector: ["timeStats", "counter"]
+      _formatter: "remoteFormatter"
+    }
+  }
+  
+  collectors: {
+    counter: {
+      _class: "org.kairosdb.metrics4j.collectors.impl.LongCounter"
+      reset: true
+      report-zero: false
+    }
+
+    timeStats: {
+      _class: "org.kairosdb.metrics4j.collectors.impl.SimpleTimerMetric"
+      report-unit: "MILLIS"
+    }
+  }
+  
+  formatters: {
+    remoteFormatter: {
+      _class: "org.kairosdb.metrics4j.formatters.MethodToSnakeCase"
+      template: "kairosdb.remote.%{metricName}.%{field}"
+    }
+  }
+}
+```
