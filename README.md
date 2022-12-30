@@ -18,4 +18,7 @@ The `ListenerModule` adds a listener to the data point events coming into kairos
 forwards the events on to a remote Kairos instance.  Effectively letting you fork the data.
 
 For a pure remote Kairos instance you can comment out the datastore modules and just
-use the `ListenerModule`, effectively making the Kairos instance a write only node.
+use the `ListenerModule`, effectively making the Kairos instance a write only node
+that forwards data on to another Kairos instance.  This is useful so clients
+can report metrics locally and the metrics are compressed and forwarded ot a 
+remote Kairos instance.
