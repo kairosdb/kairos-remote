@@ -401,6 +401,9 @@ public class RemoteListener
 
 		synchronized (m_dataFileLock)
 		{
+			if (m_dataPointCounter == 0)
+				return;
+
 			fileSize = (new File(m_dataFileName)).length();
 
 			if (conditionalRoll)
