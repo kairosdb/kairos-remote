@@ -165,7 +165,7 @@ public class RemoteListener
 		return ret;
 	}
 
-	private void flushMap()
+	/*package*/ void flushMap()
 	{
 		Multimap<DataPointKey, DataPoint> flushMap = createNewMap();
 
